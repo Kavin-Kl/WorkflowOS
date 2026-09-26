@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "WorkFlowOS Observer",
+  "version": "0.1.0",
+  "description": "Shares semantic browser activity (navigation, clicks, submits, downloads) with the local WorkFlowOS desktop agent. Never sends typed values.",
+  "permissions": ["tabs", "downloads", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": { "default_popup": "popup.html", "default_title": "WorkFlowOS" }
+}

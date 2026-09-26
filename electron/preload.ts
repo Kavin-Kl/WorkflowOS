@@ -1,24 +1,22 @@
 import { ipcRenderer, contextBridge } from 'electron'
+import { API_METHODS, PUSH_CHANNELS, type ApiMethod, type PushChannel } from './shared/api'
 
-// --------- Expose some API to the Renderer process ---------
-contextBridge.exposeInMainWorld('ipcRenderer', {
-  on(...args: Parameters<typeof ipcRenderer.on>) {
-    const [channel, listener] = args
-    return ipcRenderer.on(channel, (event, ...args) => listener(event, ...args))
-  },
-  off(...args: Parameters<typeof ipcRenderer.off>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.off(channel, ...omit)
-  },
-  send(...args: Parameters<typeof ipcRenderer.send>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.send(channel, ...omit)
-  },
-  invoke(...args: Parameters<typeof ipcRenderer.invoke>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.invoke(channel, ...omit)
-  },
+// The renderer gets exactly the typed API surface: allowlisted methods and
+// push channels, never raw ipcRenderer.
+const call = (method: ApiMethod, ...args: unknown[]) => {
+  if (!API_METHODS.includes(method)) return Promise.reject(new Error(`Unknown method ${method}`))
+  return ipcRenderer.invoke('wf:call', method, ...args).then((r: { ok: boolean; value?: unknown; error?: string }) => {
+    if (!r.ok) throw new Error(r.error)
+    return r.value
+  })
+}
 
-  // You can expose other APTs you need here.
-  // ...
+contextBridge.exposeInMainWorld('wf', {
+  call,
+  on(channel: PushChannel, fn: (payload: unknown) => void) {
+    if (!PUSH_CHANNELS.includes(channel)) throw new Error(`Unknown channel ${channel}`)
+    const listener = (_: unknown, payload: unknown) => fn(payload)
+    ipcRenderer.on(`wf:${channel}`, listener)
+    return () => ipcRenderer.off(`wf:${channel}`, listener)
+  },
 })

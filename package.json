@@ -1,33 +1,43 @@
 {
   "name": "workflowos",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p .",
+    "build": "tsc --noEmit -p . && vite build && electron-builder",
+    "build:mac": "tsc --noEmit -p . && vite build && electron-builder --mac",
+    "build:win": "tsc --noEmit -p . && vite build && electron-builder --win",
+    "lint": "eslint electron src --ext ts,tsx --report-unused-disable-directives"
   },
   "dependencies": {
+    "@google/genai": "^2.24.0",
+    "playwright-core": "^1.63.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@types/node": "^26.6.3",
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",
+    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^7.1.1",
     "@typescript-eslint/parser": "^7.1.1",
-    "@vitejs/plugin-react": "^4.2.1",
+    "@vitejs/plugin-react": "^6.1.1",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
     "eslint": "^8.57.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
     "typescript": "^5.2.2",
-    "vite": "^5.1.6",
-    "electron": "^30.0.1",
-    "electron-builder": "^24.13.3",
-    "vite-plugin-electron": "^0.28.6",
-    "vite-plugin-electron-renderer": "^0.14.5"
+    "vite": "^8.3.1",
+    "vite-plugin-electron": "^1.1.2",
+    "vite-plugin-electron-renderer": "^1.0.0",
+    "vitest": "^5.0.2"
   },
-  "main": "dist-electron/main.js"
+  "main": "dist-electron/main.js",
+  "description": "AI-powered OS-level workflow automation: observe, discover, understand, generate, approve, automate, learn."
 }
