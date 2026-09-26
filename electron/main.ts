@@ -4,7 +4,7 @@ import path from 'node:path'
 import type { WorkflowOSApi } from './shared/api'
 import { API_METHODS, PUSH_CHANNELS } from './shared/api'
 import { MECHANISM_PRIORITY, type Workflow } from './shared/types'
-import { getDb, openDb } from './core/db'
+import { getDb, kvGet, kvSet, openDb } from './core/db'
 import { bus, log, newId } from './core/bus'
 import { getSettings, publicSettings, setSecret, updateSettings } from './core/settings'
 import { getWorkflow, listPatterns, listWorkflows, resetAll, saveWorkflow, savePattern, getPattern } from './core/store'
@@ -13,7 +13,7 @@ import { DiscoveryEngine } from './discover/engine'
 import { AutomationEngine, getRun, listRuns } from './automate/engine'
 import { TriggerManager, sampleVars } from './automate/triggers'
 import { EXECUTORS } from './automate/executors'
-import { closeBrowser } from './automate/browser'
+import { automationBrowserName, closeBrowser, openForSignIn, setProfileDir } from './automate/browser'
 import { ACTIONS } from './generate/catalog'
 import { validateSpec } from './generate/validate'
 import { allStats } from './learn/stats'
@@ -44,6 +44,7 @@ let win: BrowserWindow | null = null
 const dataDir = app.getPath('userData')
 
 openDb(dataDir)
+setProfileDir(path.join(dataDir, 'automation-browser'))
 const agent = new ActivityAgent()
 const discovery = new DiscoveryEngine()
 const engine = new AutomationEngine(dataDir)
@@ -73,6 +74,7 @@ const api: WorkflowOSApi = {
     patternCount: listPatterns().length,
     activeWorkflows: listWorkflows().filter((w) => w.status === 'active').length,
     accessibilityTrusted: process.platform === 'darwin' ? systemPreferences.isTrustedAccessibilityClient(false) : true,
+    automationBrowser: automationBrowserName() === 'not started' && kvGet('automationBrowserUsed', false) ? 'ready' : automationBrowserName(),
   }),
   getSettings: () => publicSettings(),
   updateSettings: (patch) => {
@@ -157,10 +159,12 @@ const api: WorkflowOSApi = {
     saveWorkflow(wf)
     return wf
   },
-  runWorkflow: (async (id: string, input: 'sample' | 'sample_missing' | 'latest_email') => {
+  runWorkflow: (async (id: string, input: 'now' | 'sample' | 'latest_email', inputs: Record<string, string> = {}) => {
     const wf = mustWorkflow(id)
     if (input === 'latest_email') return triggers.runOnLatest(wf)
-    return engine.start(wf, sampleVars(input === 'sample_missing'), input === 'sample' ? 'Test run (sample email)' : 'Test run (unknown customer)')
+    const given = Object.fromEntries(Object.entries(inputs).filter(([, v]) => v !== '').map(([k, v]) => [`input.${k}`, v]))
+    if (input === 'sample') return engine.start(wf, { ...sampleVars(), ...given }, 'Test run (sample email)')
+    return engine.start(wf, given, 'Run now')
   }) as never,
   resumeRun: (async (runId: string, mode: 'continue' | 'retry' | 'cancel', patch: Record<string, string> = {}) => {
     const run = getRun(runId)
@@ -180,6 +184,10 @@ const api: WorkflowOSApi = {
   openCrm: () => {
     shell.openExternal(`http://localhost:${getSettings().crmPort}/customers`)
   },
+  openAutomationBrowser: ((url?: string) => {
+    kvSet('automationBrowserUsed', true)
+    return openForSignIn(url)
+  }) as never,
   openExternal: (url) => {
     if (/^https?:\/\//.test(url)) shell.openExternal(url)
   },
@@ -223,6 +231,7 @@ for (const ch of PUSH_CHANNELS) {
 
 function createWindow() {
   win = new BrowserWindow({
+    show: false,
     width: 1320,
     height: 860,
     minWidth: 980,
@@ -244,11 +253,41 @@ function createWindow() {
   win.webContents.on('will-navigate', (e, url) => {
     if (!isOwnUrl(url)) e.preventDefault()
   })
-  if (VITE_DEV_SERVER_URL) win.loadURL(VITE_DEV_SERVER_URL)
-  else win.loadFile(path.join(RENDERER_DIST, 'index.html'))
+  win.once('ready-to-show', () => win?.show())
+  // Never leave a blank window: show it anyway after a few seconds, and retry
+  // if the dev server was not ready or the renderer died.
+  setTimeout(() => win && !win.isVisible() && win.show(), 4000)
+  let retries = 0
+  win.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
+    if (!isMainFrame || code === -3) return // -3 = aborted by a newer navigation
+    log('window', `Load failed (${code} ${desc}) for ${url}`, 'error')
+    if (retries++ < 10) setTimeout(() => load(), 1000)
+  })
+  win.webContents.on('render-process-gone', (_e, d) => {
+    log('window', `Renderer gone: ${d.reason}`, 'error')
+    if (retries++ < 10) setTimeout(() => load(), 500)
+  })
+  win.webContents.on('console-message', (e) => {
+    if (e.level === 'error') log('renderer', e.message.slice(0, 500), 'error')
+  })
+  const load = () => (VITE_DEV_SERVER_URL ? win?.loadURL(VITE_DEV_SERVER_URL) : win?.loadFile(path.join(RENDERER_DIST, 'index.html')))
+  load()
+}
+
+// One instance only: a second copy would fight over the CRM and extension ports.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
 }
 
 app.whenReady().then(() => {
+  if (!app.hasSingleInstanceLock()) return
   const s = getSettings()
   startCrmServer({ port: s.crmPort, attachmentsDir: path.join(dataDir, 'crm-attachments'), apiEnabled: () => getSettings().crmApiEnabled })
   agent.start()

@@ -102,7 +102,14 @@ function WorkflowDetail({ wf }: { wf: Workflow }) {
   const setParam = (stepIdx: number, name: string, value: string) =>
     setDraft((d) => ({ ...d, steps: d.steps.map((s, i) => (i === stepIdx ? { ...s, params: { ...s.params, [name]: value } } : s)) }))
 
-  const needsGmail = wf.spec.trigger.type === 'gmail.new_email' && !settings?.gmailConnected
+  const isEmail = wf.spec.trigger.type === 'gmail.new_email'
+  const needsGmail = isEmail && !settings?.gmailConnected
+  const askInputs = wf.spec.variables.filter((v) => !v.from.includes('{{'))
+  const [runInputs, setRunInputs] = useState<Record<string, string> | null>(null)
+  const runNow = () => {
+    if (askInputs.length) setRunInputs({})
+    else act('now', () => api.runWorkflow(wf.id, 'now'))
+  }
 
   return (
     <div>
@@ -169,22 +176,71 @@ function WorkflowDetail({ wf }: { wf: Workflow }) {
               <span className="kicker">Trigger</span>
               <strong>{spec.trigger.description}</strong>
             </div>
-            {spec.trigger.type === 'gmail.new_email' && (
+            {editing ? (
               <div className="params">
-                <div className="k">gmail query</div>
-                {editing ? (
-                  <input
-                    className="input mono"
-                    value={draft.trigger.config.query ?? ''}
-                    onChange={(e) => setDraft((d) => ({ ...d, trigger: { ...d.trigger, config: { ...d.trigger.config, query: e.target.value } } }))}
-                  />
-                ) : (
-                  <div className="v">{spec.trigger.config.query}</div>
+                <div className="k">type</div>
+                <select
+                  className="select"
+                  value={draft.trigger.type}
+                  onChange={(e) => {
+                    const type = e.target.value as WorkflowSpec['trigger']['type']
+                    const config: Record<string, string> = type === 'gmail.new_email' ? { query: 'is:unread newer_than:2d' } : type === 'schedule' ? { time: '09:00' } : {}
+                    const description = type === 'gmail.new_email' ? 'New matching email in Gmail' : type === 'schedule' ? 'Every day' : 'Run on demand'
+                    setDraft((d) => ({ ...d, trigger: { type, config, description } }))
+                  }}
+                >
+                  <option value="manual">Run on demand</option>
+                  <option value="schedule">Every day at…</option>
+                  <option value="gmail.new_email">New Gmail message</option>
+                </select>
+                {draft.trigger.type !== 'manual' && (
+                  <>
+                    <div className="k">{draft.trigger.type === 'schedule' ? 'time' : 'gmail query'}</div>
+                    <input
+                      className="input mono"
+                      type={draft.trigger.type === 'schedule' ? 'time' : 'text'}
+                      value={draft.trigger.type === 'schedule' ? draft.trigger.config.time ?? '' : draft.trigger.config.query ?? ''}
+                      onChange={(e) =>
+                        setDraft((d) => ({ ...d, trigger: { ...d.trigger, config: { [d.trigger.type === 'schedule' ? 'time' : 'query']: e.target.value } } }))
+                      }
+                    />
+                  </>
                 )}
               </div>
+            ) : (
+              spec.trigger.type !== 'manual' && (
+                <div className="params">
+                  <div className="k">{spec.trigger.type === 'schedule' ? 'time' : 'gmail query'}</div>
+                  <div className="v">{spec.trigger.type === 'schedule' ? spec.trigger.config.time : spec.trigger.config.query}</div>
+                </div>
+              )
             )}
           </div>
         </div>
+
+        {spec.variables.length > 0 && (
+          <div className="node">
+            <div className="pin">{'{ }'}</div>
+            <div className="card body">
+              <div className="title">
+                <span className="kicker">Inputs</span>
+                <strong>Values that change each run</strong>
+              </div>
+              <div className="params">
+                {spec.variables.map((v, vi) => (
+                  <FragmentInput
+                    key={v.name}
+                    name={v.name}
+                    description={v.description}
+                    from={v.from}
+                    editing={editing}
+                    onChange={(from) => setDraft((d) => ({ ...d, variables: d.variables.map((x, xi) => (xi === vi ? { ...x, from } : x)) }))}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {spec.steps.map((s, i) => {
           const info = byAction.get(s.action)
@@ -215,16 +271,44 @@ function WorkflowDetail({ wf }: { wf: Workflow }) {
         })}
       </div>
 
+      {runInputs !== null && (
+        <div className="card card-pad" style={{ marginTop: 16 }}>
+          <strong>Inputs for this run</strong>
+          <div className="params">
+            {askInputs.map((v) => (
+              <FragmentRunInput key={v.name} v={v} value={runInputs[v.name] ?? ''} onChange={(val) => setRunInputs((r) => ({ ...r, [v.name]: val }))} />
+            ))}
+          </div>
+          <div className="row" style={{ marginTop: 12 }}>
+            <button className="btn primary" onClick={() => (act('now', () => api.runWorkflow(wf.id, 'now', runInputs)), setRunInputs(null))}>
+              Run
+            </button>
+            <button className="btn ghost" onClick={() => setRunInputs(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {wf.status === 'proposed' ? (
         <div className="approve-bar">
           <div className="grow">
             <b>Automate this?</b>{' '}
             <span style={{ opacity: 0.7 }}>
-              {needsGmail ? 'Connect Gmail in Settings so the trigger can fire. You can still test it with a sample email.' : 'It will run for every new email matching the trigger.'}
+              {needsGmail
+                ? 'Connect Gmail in Settings so the trigger can fire.'
+                : wf.spec.trigger.type === 'manual'
+                  ? 'You will run it from here whenever you need it.'
+                  : 'It will run automatically on its trigger.'}
             </span>
           </div>
-          <button className="btn" disabled={!!busy} onClick={() => act('test', () => api.runWorkflow(wf.id, 'sample'))}>
-            Test with sample email
+          {isEmail && (
+            <button className="btn" disabled={!!busy} onClick={() => act('test', () => api.runWorkflow(wf.id, 'sample'))}>
+              Try with sample email
+            </button>
+          )}
+          <button className="btn" disabled={!!busy} onClick={runNow}>
+            Test run
           </button>
           <button className="btn" disabled={!!busy} onClick={() => act('dismiss', () => api.dismissWorkflow(wf.id), 'Dismissed')}>
             Dismiss
@@ -235,16 +319,18 @@ function WorkflowDetail({ wf }: { wf: Workflow }) {
         </div>
       ) : (
         <div className="row" style={{ marginTop: 16, flexWrap: 'wrap' }}>
-          <button className="btn" disabled={!!busy} onClick={() => act('sample', () => api.runWorkflow(wf.id, 'sample'))}>
-            Test: sample email
+          <button className="btn primary" disabled={!!busy} onClick={runNow}>
+            Run now
           </button>
-          <button className="btn" disabled={!!busy} onClick={() => act('missing', () => api.runWorkflow(wf.id, 'sample_missing'))}>
-            Test: unknown customer
-          </button>
-          {wf.spec.trigger.type === 'gmail.new_email' && (
-            <button className="btn" disabled={!!busy || needsGmail} onClick={() => act('latest', () => api.runWorkflow(wf.id, 'latest_email'))}>
-              Run on latest matching email
-            </button>
+          {isEmail && (
+            <>
+              <button className="btn" disabled={!!busy || needsGmail} onClick={() => act('latest', () => api.runWorkflow(wf.id, 'latest_email'))}>
+                Run on latest matching email
+              </button>
+              <button className="btn" disabled={!!busy} onClick={() => act('sample', () => api.runWorkflow(wf.id, 'sample'))}>
+                Try with sample email
+              </button>
+            </>
           )}
           <span className="grow" />
           <button className="btn" onClick={() => act('status', () => api.setWorkflowStatus(wf.id, wf.status === 'active' ? 'paused' : 'active'))}>
@@ -258,7 +344,7 @@ function WorkflowDetail({ wf }: { wf: Workflow }) {
       <div className="card">
         {runs.length === 0 ? (
           <div className="empty" style={{ padding: 28 }}>
-            No runs yet. Test with a sample email to watch each step choose its mechanism.
+            No runs yet. Use Test run to watch each step choose its mechanism.
           </div>
         ) : (
           runs.map((r) => <RunView key={r.id} run={r} wf={wf} byAction={byAction} />)
@@ -281,12 +367,42 @@ function FragmentParam({ k, v, editing, onChange }: { k: string; v: string; edit
   )
 }
 
+function FragmentInput({ name, description, from, editing, onChange }: { name: string; description: string; from: string; editing: boolean; onChange: (v: string) => void }) {
+  return (
+    <>
+      <div className="k" title={description}>
+        {name}
+      </div>
+      {editing ? (
+        <input className="input mono" value={from} onChange={(e) => onChange(e.target.value)} placeholder='input, or e.g. {{email.fromAddress}}' />
+      ) : (
+        <div className="v">
+          {from.includes('{{') ? from : <span className="muted">asked when the run starts</span>} <span className="muted">· {description}</span>
+        </div>
+      )}
+    </>
+  )
+}
+
+function FragmentRunInput({ v, value, onChange }: { v: { name: string; description: string; example?: string }; value: string; onChange: (v: string) => void }) {
+  return (
+    <>
+      <div className="k" title={v.name}>
+        {v.description}
+      </div>
+      <input className="input" value={value} placeholder={v.example ? `e.g. ${v.example}` : v.name} onChange={(e) => onChange(e.target.value)} />
+    </>
+  )
+}
+
 function RunView({ run, wf, byAction }: { run: Run; wf: Workflow; byAction: Map<string, ActionInfo> }) {
   const [customerId, setCustomerId] = useState('')
+  const [needVals, setNeedVals] = useState<Record<string, string>>({})
   const [open, setOpen] = useState(run.status !== 'succeeded')
   const resume = (mode: 'continue' | 'retry' | 'cancel') =>
-    attempt(() => api.resumeRun(run.id, mode, customerId ? { 'customer.id': customerId } : {}))
-  const pausedOnCustomer = run.status === 'waiting_user' && /customer/i.test(run.message ?? '')
+    attempt(() => api.resumeRun(run.id, mode, { ...(customerId ? { 'customer.id': customerId } : {}), ...needVals }))
+  const needsMissing = (run.needs ?? []).some((n) => !needVals[n.name])
+  const pausedOnCustomer = run.status === 'waiting_user' && /customer not found/i.test(run.message ?? '')
 
   return (
     <div className="run">
@@ -324,11 +440,18 @@ function RunView({ run, wf, byAction }: { run: Run; wf: Workflow; byAction: Map<
               <div style={{ marginBottom: 8 }}>
                 <b>Needs you:</b> {run.message}
               </div>
+              {run.needs && run.needs.length > 0 && (
+                <div className="params" style={{ marginBottom: 10 }}>
+                  {run.needs.map((n) => (
+                    <FragmentRunInput key={n.name} v={n} value={needVals[n.name] ?? ''} onChange={(val) => setNeedVals((x) => ({ ...x, [n.name]: val }))} />
+                  ))}
+                </div>
+              )}
               <div className="row">
-                {pausedOnCustomer && (
+                {pausedOnCustomer && !run.needs && (
                   <input className="input" style={{ maxWidth: 260 }} placeholder="CRM customer id (e.g. c_1001)" value={customerId} onChange={(e) => setCustomerId(e.target.value)} />
                 )}
-                <button className="btn primary sm" onClick={() => resume('continue')} disabled={pausedOnCustomer && !customerId}>
+                <button className="btn primary sm" onClick={() => resume('continue')} disabled={(pausedOnCustomer && !run.needs && !customerId) || needsMissing}>
                   Continue
                 </button>
                 <button className="btn sm" onClick={() => resume('retry')}>

@@ -27,11 +27,13 @@ export const DEFAULT_MINE: MineOptions = {
   minLength: 3,
   maxLength: 12,
   sessionGapMs: 10 * 60_000,
-  minApps: 2,
+  minApps: 1,
   similarity: 0.25,
 }
 
 const appOf = (token: string) => token.split(':')[0]
+/** Tokens that change something (vs. merely viewing a page). */
+const isAction = (token: string) => !/:(view|open_\w+|search_\w+)$/.test(token)
 
 /** Split the step stream at idle markers and long gaps. */
 export function segment(steps: Step[], gapMs: number): Step[][] {
@@ -110,6 +112,7 @@ export function minePatterns(allSteps: Step[], opts: Partial<MineOptions> = {}):
       for (let i = 0; i + len <= toks.length; i++) {
         const sig = toks.slice(i, i + len)
         if (new Set(sig.map(appOf)).size < o.minApps) continue
+        if (!sig.some(isAction)) continue // pure browsing is not a workflow
         const key = sig.join('>')
         if ((lastEnd.get(key) ?? -1) >= i) continue // overlapping occurrence
         lastEnd.set(key, i + len - 1)
@@ -198,7 +201,13 @@ export function minePatterns(allSteps: Step[], opts: Partial<MineOptions> = {}):
       const occurrences: PatternOccurrence[] = c.occ
         .map((oc) => {
           const sess = sessions[oc.session].slice(oc.start, oc.end + 1)
-          return { start: sess[0].ts, end: sess[sess.length - 1].ts, eventIds: sess.flatMap((s) => s.eventIds) }
+          const exact = sess.length === c.signature.length && sess.every((s, i) => s.token === c.signature[i])
+          return {
+            start: sess[0].ts,
+            end: sess[sess.length - 1].ts,
+            eventIds: sess.flatMap((s) => s.eventIds),
+            ...(exact ? { steps: sess.map((s) => s.eventIds) } : {}),
+          }
         })
         .sort((a, b) => a.start - b.start)
       const avgDurationMs = occurrences.reduce((n, x) => n + (x.end - x.start), 0) / occurrences.length

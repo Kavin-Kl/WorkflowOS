@@ -34,6 +34,8 @@ export interface PatternOccurrence {
   start: number
   end: number
   eventIds: string[]
+  /** Event ids per signature step (only for exact matches), used to compile replay steps. */
+  steps?: string[][]
 }
 
 export type PatternStatus = 'candidate' | 'proposed' | 'approved' | 'dismissed'
@@ -64,11 +66,11 @@ export interface IntentSummary {
 
 // ---------- Workflow spec ----------
 
-export type TriggerType = 'gmail.new_email' | 'file.created' | 'manual'
+export type TriggerType = 'gmail.new_email' | 'schedule' | 'manual'
 
 export interface WorkflowTrigger {
   type: TriggerType
-  /** gmail.new_email → { query }, file.created → { folder, pattern } */
+  /** gmail.new_email → { query }, schedule → { time: "HH:MM" } */
   config: Record<string, string>
   description: string
 }
@@ -101,7 +103,8 @@ export interface WorkflowSpec {
   intent: string
   description: string
   trigger: WorkflowTrigger
-  variables: { name: string; description: string; from: string }[]
+  /** from: "input" = asked when the run starts; otherwise a template like "{{email.fromAddress}}". */
+  variables: { name: string; description: string; from: string; example?: string }[]
   steps: WorkflowStep[]
   integrations: string[]
   generatedBy: 'gemini' | 'template'
@@ -151,6 +154,8 @@ export interface Run {
   steps: StepResult[]
   vars: Record<string, unknown>
   message?: string
+  /** Inputs the run is waiting for (status waiting_user). */
+  needs?: { name: string; description: string }[]
 }
 
 export interface MechanismStat {
@@ -181,6 +186,7 @@ export interface PublicSettings {
   urlBlocklist: string[]
   retentionDays: number
   minSupport: number
+  recordValues: boolean
 }
 
 export interface SensorStatus {
@@ -196,4 +202,5 @@ export interface AppStatus {
   patternCount: number
   activeWorkflows: number
   accessibilityTrusted: boolean
+  automationBrowser: string
 }

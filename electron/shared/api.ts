@@ -23,6 +23,7 @@ export type EditableSettings = Pick<
   | 'urlBlocklist'
   | 'retentionDays'
   | 'minSupport'
+  | 'recordValues'
 >
 
 export type SecretKey = 'geminiKey' | 'gmailClientSecret' | 'slackToken' | 'slackWebhook'
@@ -63,7 +64,7 @@ export interface WorkflowOSApi {
   approveWorkflow(id: string): Workflow
   dismissWorkflow(id: string): void
   setWorkflowStatus(id: string, status: 'active' | 'paused'): Workflow
-  runWorkflow(id: string, input: 'sample' | 'sample_missing' | 'latest_email'): Run
+  runWorkflow(id: string, input: 'now' | 'sample' | 'latest_email', inputs?: Record<string, string>): Run
   resumeRun(runId: string, mode: 'continue' | 'retry' | 'cancel', patch?: Record<string, string>): Run
 
   connectGmail(): string
@@ -71,6 +72,7 @@ export interface WorkflowOSApi {
   testGemini(): string
   testSlack(): string
   openCrm(): void
+  openAutomationBrowser(url?: string): string
   openExternal(url: string): void
 }
 
@@ -101,6 +103,7 @@ export const API_METHODS: ApiMethod[] = [
   'testGemini',
   'testSlack',
   'openCrm',
+  'openAutomationBrowser',
   'openExternal',
 ]
 

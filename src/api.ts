@@ -12,10 +12,14 @@ declare global {
 
 /** Typed proxy: api.listWorkflows() → main process. */
 export const api = new Proxy({} as AsyncApi, {
-  get: (_, method: string) => (...args: unknown[]) => window.wf.call(method, ...args),
+  get: (_, method: string) => (...args: unknown[]) => {
+    if (!window.wf) return Promise.reject(new Error('WorkFlowOS bridge not loaded (preload failed). Restart the app.'))
+    return window.wf.call(method, ...args)
+  },
 })
 
 export function onPush<T>(channel: PushChannel, fn: (payload: T) => void): () => void {
+  if (!window.wf) return () => {}
   return window.wf.on(channel, fn as (p: unknown) => void)
 }
 

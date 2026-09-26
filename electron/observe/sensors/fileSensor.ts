@@ -18,7 +18,7 @@ export class FileSensor {
     const ok: string[] = []
     for (const folder of folders) {
       try {
-        const w = fs.watch(folder, { persistent: false }, (_type, name) => name && this.onChange(folder, String(name)))
+        const w = fs.watch(folder, { persistent: false }, (type, name) => name && this.onChange(folder, String(name), type === 'change'))
         this.watchers.push(w)
         ok.push(path.basename(folder))
       } catch {
@@ -36,7 +36,7 @@ export class FileSensor {
     this.status = { name: 'File watcher', state: 'stopped' }
   }
 
-  private onChange(folder: string, name: string) {
+  private onChange(folder: string, name: string, modified: boolean) {
     if (TEMP.test(name)) return
     const full = path.join(folder, name)
     const now = Date.now()
@@ -52,7 +52,7 @@ export class FileSensor {
           app: 'Files',
           path: full,
           target: `file:${path.extname(name).slice(1).toLowerCase() || 'file'}`,
-          data: { name, size: st.size, folder: path.basename(folder) },
+          data: { name, size: st.size, folder: path.basename(folder), modified: modified || st.birthtimeMs < Date.now() - 10_000 },
         })
       })
     }, 600)

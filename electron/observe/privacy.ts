@@ -3,6 +3,8 @@ import type { ActivityEvent } from '../shared/types'
 export interface PrivacyConfig {
   appBlocklist: string[]
   urlBlocklist: string[]
+  /** Keep typed values (local only) so form filling can be learned and replayed. */
+  recordValues: boolean
 }
 
 const SENSITIVE_TARGET = /pass(word)?|pwd|otp|2fa|cvv|card.?number|ssn|social.?security|secret|token|pin\b/i
@@ -26,8 +28,12 @@ export function applyPrivacy(ev: ActivityEvent, cfg: PrivacyConfig): ActivityEve
   if (out.data) {
     const data: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(out.data)) {
-      // Raw field values never leave the sensor; only their shape.
-      if (k === 'value') continue
+      // Typed values stay unscrubbed (replay needs them) but are local-only and
+      // never included in anything sent to Gemini.
+      if (k === 'value') {
+        if (cfg.recordValues && typeof v === 'string') data[k] = v.slice(0, 2000)
+        continue
+      }
       data[k] = typeof v === 'string' ? scrub(v).slice(0, 200) : v
     }
     out.data = data

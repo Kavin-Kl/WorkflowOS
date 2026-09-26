@@ -2,7 +2,7 @@ import type { TriggerType } from '../shared/types'
 
 export interface ActionDef {
   id: string
-  integration: 'gmail' | 'crm' | 'slack' | 'ai' | 'control'
+  integration: 'gmail' | 'crm' | 'slack' | 'ai' | 'control' | 'web' | 'desktop' | 'excel'
   description: string
   params: { name: string; description: string; required: boolean }[]
   /** Variables this action writes, as "namespace.key". */
@@ -80,6 +80,121 @@ export const ACTIONS: ActionDef[] = [
     outputs: ['slack.ts'],
     covers: ['Slack:open_channel', 'Slack:compose_message', 'Slack:send_message'],
   },
+  // ---- Learned web replay (any site; runs in the signed-in automation browser) ----
+  {
+    id: 'web.open',
+    integration: 'web',
+    description: 'Open a page in the automation browser.',
+    params: [{ name: 'url', description: 'Absolute URL', required: true }],
+    outputs: [],
+    covers: [],
+  },
+  {
+    id: 'web.click',
+    integration: 'web',
+    description: 'Click an element located by role + accessible name (fallbacks: text, test id).',
+    params: [
+      { name: 'role', description: 'ARIA role, e.g. button, link, tab', required: false },
+      { name: 'name', description: 'Accessible name / label', required: true },
+      { name: 'text', description: 'Visible text fallback', required: false },
+      { name: 'testid', description: 'data-testid fallback', required: false },
+    ],
+    outputs: [],
+    covers: [],
+  },
+  {
+    id: 'web.fill',
+    integration: 'web',
+    description: 'Type a value into a field located by label (fallbacks: placeholder, test id).',
+    params: [
+      { name: 'label', description: 'Field label', required: true },
+      { name: 'value', description: 'Value to type; may use {{variables}}', required: true },
+      { name: 'placeholder', description: 'Placeholder fallback', required: false },
+      { name: 'testid', description: 'data-testid fallback', required: false },
+    ],
+    outputs: [],
+    covers: [],
+  },
+  {
+    id: 'web.upload',
+    integration: 'web',
+    description: 'Attach a local file to a file input located by label.',
+    params: [
+      { name: 'label', description: 'File input label', required: true },
+      { name: 'path', description: 'Local file path, e.g. {{attachment.path}}', required: true },
+    ],
+    outputs: [],
+    covers: [],
+  },
+  {
+    id: 'web.press',
+    integration: 'web',
+    description: 'Press a key (e.g. Enter) in the field located by label, or the page.',
+    params: [
+      { name: 'key', description: 'Key name, e.g. Enter', required: true },
+      { name: 'label', description: 'Field label (optional)', required: false },
+      { name: 'placeholder', description: 'Placeholder fallback', required: false },
+    ],
+    outputs: [],
+    covers: [],
+  },
+  // ---- Desktop apps via OS accessibility (macOS AX / Windows UI Automation) ----
+  {
+    id: 'desktop.open_app',
+    integration: 'desktop',
+    description: 'Launch or bring a desktop application to the front.',
+    params: [{ name: 'app', description: 'Application / process name, e.g. "Microsoft Excel", "Notes"', required: true }],
+    outputs: [],
+    covers: [],
+  },
+  {
+    id: 'desktop.click',
+    integration: 'desktop',
+    description: 'Press a control (button, menu item, checkbox) in a desktop app by its accessible name.',
+    params: [
+      { name: 'app', description: 'Application / process name', required: true },
+      { name: 'name', description: 'Accessible name of the control', required: true },
+      { name: 'role', description: 'Role, e.g. button', required: false },
+    ],
+    outputs: [],
+    covers: [],
+  },
+  {
+    id: 'desktop.type',
+    integration: 'desktop',
+    description: 'Set the value of a text field in a desktop app by its accessible name.',
+    params: [
+      { name: 'app', description: 'Application / process name', required: true },
+      { name: 'label', description: 'Accessible name of the field', required: true },
+      { name: 'value', description: 'Value; may use {{variables}}', required: true },
+    ],
+    outputs: [],
+    covers: [],
+  },
+  {
+    id: 'desktop.press',
+    integration: 'desktop',
+    description: 'Send a keyboard shortcut to a desktop app, e.g. "cmd+s", "ctrl+enter", "enter".',
+    params: [
+      { name: 'app', description: 'Application / process name', required: true },
+      { name: 'keys', description: 'Shortcut', required: true },
+    ],
+    outputs: [],
+    covers: [],
+  },
+  // ---- Spreadsheets, edited as files (more reliable than driving the Excel UI) ----
+  {
+    id: 'excel.append_row',
+    integration: 'excel',
+    description: 'Append a row to an .xlsx or .csv file (the workbook the user keeps updating).',
+    params: [
+      { name: 'file', description: 'Absolute path to the .xlsx / .csv', required: true },
+      { name: 'values', description: 'Cell values separated by " | "; may use {{variables}}', required: true },
+      { name: 'sheet', description: 'Worksheet name (default: first sheet)', required: false },
+    ],
+    outputs: ['excel.row'],
+    covers: ['Excel:save_sheet'],
+  },
   {
     id: 'control.ask_user',
     integration: 'control',
@@ -99,9 +214,15 @@ export const TRIGGERS: { type: TriggerType; description: string; outputs: string
   },
   {
     type: 'manual',
-    description: 'Run on demand from WorkFlowOS with sample input.',
-    outputs: ['email.messageId', 'email.from', 'email.fromName', 'email.fromAddress', 'email.subject', 'email.body'],
+    description: 'Run on demand from WorkFlowOS; values that change each time are asked for as inputs.',
+    outputs: [],
     config: [],
+  },
+  {
+    type: 'schedule',
+    description: 'Runs every day at a fixed local time.',
+    outputs: [],
+    config: ['time'],
   },
 ]
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, fmtTime, onPush, useLive } from '../api'
 import type { ActivityEvent, AppStatus, PublicSettings } from '../../electron/shared/types'
-import { attempt, toast } from '../components/Toast'
+import { attempt } from '../components/Toast'
 import type { Page } from '../App'
 
 type LogLine = { level: string; scope: string; message: string; ts: number }
@@ -20,7 +20,6 @@ export default function Observe({ status, go }: { status: AppStatus | null; go: 
   const [fresh, setFresh] = useState<Set<string>>(new Set())
   const [logs, setLogs] = useState<LogLine[]>([])
   const [settings, reloadSettings] = useLive<PublicSettings | null>(() => api.getSettings(), ['status'], null)
-  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     api.recentEvents(80).then(setEvents)
@@ -34,16 +33,6 @@ export default function Observe({ status, go }: { status: AppStatus | null; go: 
       offL()
     }
   }, [])
-
-  const loadDemo = async () => {
-    setBusy(true)
-    const r = await attempt(() => api.loadDemo())
-    setBusy(false)
-    if (!r) return
-    setEvents(await api.recentEvents(80))
-    toast(`Loaded ${r.events} observed events · ${r.patterns} repeated workflow${r.patterns === 1 ? '' : 's'} found`)
-    if (r.proposed) go('discover')
-  }
 
   const toggle = async () => {
     await attempt(() => api.updateSettings({ observing: !settings?.observing }))
@@ -64,9 +53,6 @@ export default function Observe({ status, go }: { status: AppStatus | null; go: 
           </p>
         </div>
         <div className="actions">
-          <button className="btn" onClick={loadDemo} disabled={busy}>
-            {busy ? 'Analysing…' : 'Load demo observations'}
-          </button>
           <button className={`btn ${settings?.observing ? '' : 'signal'}`} onClick={toggle}>
             {settings?.observing ? 'Pause observing' : 'Resume observing'}
           </button>
@@ -94,22 +80,14 @@ export default function Observe({ status, go }: { status: AppStatus | null; go: 
         </div>
       </div>
 
-      {status && status.platform === 'darwin' && !status.accessibilityTrusted && (
-        <div className="warnings" style={{ marginTop: 16 }}>
-          Accessibility permission is off, so window titles and focused controls in native apps aren't visible. Enable it in
-          System Settings → Privacy &amp; Security → Accessibility for WorkFlowOS (or your terminal while developing).
-        </div>
-      )}
+      {status && settings && <Setup status={status} settings={settings} go={go} />}
 
       <div className="section-title">Live activity</div>
       <div className="card stream">
         {events.length === 0 ? (
           <div className="empty">
             <h3>Nothing observed yet</h3>
-            <p>
-              Work normally with the browser extension connected, or load demo observations to see WorkFlowOS discover a
-              workflow.
-            </p>
+            <p>Connect the browser extension, then work normally. Do a routine a few times and WorkFlowOS will pick it up.</p>
           </div>
         ) : (
           events.slice(0, 80).map((e) => (
@@ -140,6 +118,45 @@ export default function Observe({ status, go }: { status: AppStatus | null; go: 
           ))
         )}
       </div>
+    </div>
+  )
+}
+
+function Setup({ status, settings, go }: { status: AppStatus; settings: PublicSettings; go: (p: Page) => void }) {
+  const ext = status.sensors.find((x) => x.name === 'Browser extension')?.detail?.includes('connected') ?? false
+  const items: { label: string; done: boolean; hint: string; optional?: boolean }[] = [
+    { label: 'Browser extension connected', done: ext, hint: 'Load browser-extension/ unpacked and paste the pairing token (Settings).' },
+    ...(status.platform === 'darwin'
+      ? [{ label: 'Accessibility permission', done: status.accessibilityTrusted, hint: 'System Settings → Privacy & Security → Accessibility → enable WorkFlowOS (or your terminal in dev), then restart.' }]
+      : []),
+    { label: 'Gemini API key', done: settings.geminiConfigured, hint: 'Names workflows, maps inputs, reads emails at run time.' },
+    { label: 'Signed in to your apps in the automation browser', done: status.automationBrowser !== 'not started', hint: 'Settings → Automation browser → Open, then sign in to the sites your workflows use.' },
+    { label: 'Gmail connected', done: settings.gmailConnected, hint: 'Only needed for email-triggered workflows.', optional: true },
+    { label: 'Slack connected', done: settings.slackMode !== 'none', hint: 'Only needed to post to Slack via API.', optional: true },
+  ]
+  const required = items.filter((i) => !i.optional)
+  if (required.every((i) => i.done)) return null
+  return (
+    <div className="card card-pad" style={{ marginTop: 16 }}>
+      <div className="row" style={{ marginBottom: 8 }}>
+        <strong className="grow">
+          Set up ({required.filter((i) => i.done).length}/{required.length})
+        </strong>
+        <button className="btn sm" onClick={() => go('settings')}>
+          Open settings
+        </button>
+      </div>
+      {items.map((i) => (
+        <div key={i.label} className="row" style={{ padding: '4px 0', alignItems: 'flex-start' }}>
+          <span className={`dot ${i.done ? 'running' : 'stopped'}`} style={{ marginTop: 7 }} />
+          <div>
+            <div>
+              {i.label} {i.optional && <span className="muted">(optional)</span>}
+            </div>
+            {!i.done && <div className="note" style={{ marginTop: 0 }}>{i.hint}</div>}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

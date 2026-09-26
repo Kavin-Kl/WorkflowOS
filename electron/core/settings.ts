@@ -20,6 +20,7 @@ export interface Settings {
   urlBlocklist: string[]
   retentionDays: number
   minSupport: number
+  recordValues: boolean
 }
 
 export type SecretName = 'geminiKey' | 'gmailClientSecret' | 'gmailRefreshToken' | 'slackToken' | 'slackWebhook'
@@ -35,11 +36,12 @@ function defaults(): Settings {
     crmPort: 4545,
     bridgePort: 4546,
     bridgeToken: crypto.randomBytes(12).toString('hex'),
-    watchFolders: [path.join(app.getPath('home'), 'Downloads')],
+    watchFolders: ['Downloads', 'Documents', 'Desktop'].map((d) => path.join(app.getPath('home'), d)),
     appBlocklist: ['1Password', 'Keychain Access', 'Bitwarden', 'KeePassXC', 'LastPass', 'Dashlane'],
     urlBlocklist: ['bank', 'paypal.com', 'accounts.google.com', 'login.', 'signin.'],
     retentionDays: 14,
     minSupport: 3,
+    recordValues: true,
   }
 }
 

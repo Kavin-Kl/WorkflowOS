@@ -99,6 +99,22 @@ export default function Settings({ status }: { status: AppStatus | null }) {
           </button>
         </Conn>
 
+        <Conn
+          title="Automation browser"
+          ok={status?.automationBrowser !== 'not started'}
+          desc="A separate browser profile that replays learned web steps. Sign in to the sites your workflows use once; sessions are kept."
+        >
+          <div className="row">
+            <button className="btn primary sm" onClick={() => attempt(() => api.openAutomationBrowser(), (b) => `Opened ${b}. Sign in to your apps there.`)}>
+              Open automation browser
+            </button>
+            <span className="note" style={{ marginTop: 0 }}>
+              {status?.automationBrowser}
+            </span>
+          </div>
+          <div className="note">Uses Chrome, Edge or Brave if installed. Keep it signed in; closing it is fine.</div>
+        </Conn>
+
         <Conn title="Browser extension" ok={status?.sensors.find((x) => x.name === 'Browser extension')?.detail?.includes('connected')} desc="Captures navigation, clicks, form submits and downloads with semantic labels.">
           <div className="params" style={{ gridTemplateColumns: '90px 1fr' }}>
             <div className="k">port</div>
@@ -122,6 +138,15 @@ export default function Settings({ status }: { status: AppStatus | null }) {
             <span>Observe activity</span>
             <Toggle checked={s.observing} onChange={(v) => update({ observing: v })} />
           </div>
+          <div className="field-row">
+            <div>
+              <div>Record typed values (local only)</div>
+              <div className="note" style={{ marginTop: 0 }}>
+                Needed to replay form filling. Passwords and card fields are never recorded.
+              </div>
+            </div>
+            <Toggle checked={s.recordValues} onChange={(v) => update({ recordValues: v })} />
+          </div>
           <div className="field">
             <label className="label">Never observe these apps</label>
             <ListField value={s.appBlocklist} onSave={(v) => update({ appBlocklist: v })} />
@@ -144,11 +169,20 @@ export default function Settings({ status }: { status: AppStatus | null }) {
               <TextField value={String(s.minSupport)} onSave={(v) => update({ minSupport: Math.max(2, Number(v) || 3) })} />
             </div>
           </div>
-          <div className="note">Only abstract step names and redacted titles are sent to Gemini, never raw field values.</div>
+          <div className="note">Only step names, labels and redacted titles are sent to Gemini, never recorded values.</div>
         </Conn>
       </div>
 
       <div className="section-title">Data</div>
+      <div className="card card-pad row" style={{ marginBottom: 12 }}>
+        <div className="grow">
+          <div>Load sample observations</div>
+          <div className="note" style={{ marginTop: 0 }}>For presentations: five recorded runs of the Gmail → CRM → Slack routine.</div>
+        </div>
+        <button className="btn" onClick={() => attempt(() => api.loadDemo(), (r) => `Loaded ${r.events} events · ${r.patterns} pattern(s)`)}>
+          Load sample data
+        </button>
+      </div>
       <div className="card card-pad row">
         <div className="grow">
           <div>Reset all observations, patterns, automations and runs</div>

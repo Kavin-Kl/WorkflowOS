@@ -63,7 +63,7 @@ function knownAppToken(ev: ActivityEvent): string | null | undefined {
     if (ev.kind === 'submit' && /search/.test(t)) return 'CRM:search_customer'
     if (ev.kind === 'input' && /search/.test(t)) return 'CRM:search_customer'
     if (ev.kind === 'input' && /attach|file/.test(t)) return 'CRM:attach_file'
-    if (ev.kind === 'input') return 'CRM:edit_record'
+    if (ev.kind === 'input' && /note|request/.test(t)) return 'CRM:edit_record'
     if ((ev.kind === 'submit' || ev.kind === 'click') && /save|update|note/.test(t)) return 'CRM:update_customer'
     return undefined
   }
@@ -89,13 +89,18 @@ export function toStep(ev: ActivityEvent): Step | null {
 
   const t = normTarget(ev.target ?? '')
   switch (ev.kind) {
-    case 'file_created':
-      return { ...base, token: `Files:save_${ev.target?.split(':')[1] ?? 'file'}` }
+    case 'file_created': {
+      const ext = ev.target?.split(':')[1] ?? 'file'
+      // A spreadsheet saved while working = an Excel/Numbers edit, not a download.
+      if (/^(xlsx|xlsm|xls|csv|numbers)$/.test(ext) && ev.data?.modified) return { ...base, app: 'Excel', token: `Excel:save_sheet` }
+      return { ...base, token: `Files:save_${ext}` }
+    }
     case 'download':
       return { ...base, token: `${ev.app}:download` }
     case 'navigate':
       return { ...base, token: `${ev.app}:view` }
     case 'submit':
+      if (ev.data?.key === 'Enter') return { ...base, token: `${ev.app}:press_enter:${normTarget((ev.target ?? '').replace(/^key:Enter in /, ''))}` }
       return { ...base, token: `${ev.app}:submit${t ? ':' + t : ''}` }
     case 'click':
       return t ? { ...base, token: `${ev.app}:click:${t}` } : null
@@ -118,7 +123,14 @@ export function toStep(ev: ActivityEvent): Step | null {
 export function abstractEvents(events: ActivityEvent[]): Step[] {
   const out: Step[] = []
   let lastDownloadTs = -Infinity
+  let lastClick: ActivityEvent | null = null
   for (const ev of events) {
+    // A form submit right after clicking its button is the same user action.
+    if (ev.kind === 'submit' && ev.data?.viaButton && lastClick && ev.ts - lastClick.ts < 2500 && out.length) {
+      out[out.length - 1].eventIds.push(ev.id)
+      continue
+    }
+    lastClick = ev.kind === 'click' ? ev : null
     const step = toStep(ev)
     if (!step) continue
     if (ev.kind === 'download' || step.token.endsWith(':download_attachment')) lastDownloadTs = ev.ts

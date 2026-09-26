@@ -6,9 +6,12 @@ import { getSettings } from '../core/settings'
 import { generateJson, geminiAvailable } from '../understand/gemini'
 import { downloadAttachment, gmailConnected, replyTo } from '../integrations/gmail'
 import { slackConfigured, slackSend } from '../integrations/slack'
-import { withPage } from './browser'
+import type { Locator, Page } from 'playwright-core'
+import { runPage, withPage } from './browser'
+import { desktopSupported, runDesktop } from './desktop'
 
 export interface ExecContext {
+  runId: string
   vars: Vars
   dataDir: string
   log: (msg: string) => void
@@ -215,6 +218,135 @@ const slackApi: Executor = {
   },
 }
 
+// ---------- Learned web replay ----------
+
+type Hints = { role?: string; name?: string; text?: string; testid?: string; label?: string; placeholder?: string }
+
+/**
+ * Find an element from recorded hints, trying the most semantic locator first.
+ * Polls all candidates together so a missing fallback doesn't cost a timeout each.
+ */
+async function locate(page: Page, h: Hints, kind: 'click' | 'field', timeoutMs = 12_000): Promise<Locator> {
+  const c: Locator[] = []
+  const role = (h.role || '') as Parameters<Page['getByRole']>[0]
+  if (kind === 'field') {
+    if (h.label) c.push(page.getByLabel(h.label, { exact: true }), page.getByRole('textbox', { name: h.label, exact: true }), page.getByLabel(h.label))
+    if (h.placeholder || h.label) c.push(page.getByPlaceholder(h.placeholder || h.label!))
+    if (h.label) c.push(page.getByRole('textbox', { name: h.label }))
+  } else {
+    if (h.role && h.name) c.push(page.getByRole(role, { name: h.name, exact: true }), page.getByRole(role, { name: h.name }))
+    if (h.name) c.push(page.getByText(h.name, { exact: true }), page.getByLabel(h.name, { exact: true }))
+    if (h.text) c.push(page.getByText(h.text, { exact: true }))
+  }
+  if (h.testid) c.push(page.getByTestId(h.testid))
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    for (const loc of c) {
+      const first = loc.first()
+      if (await first.isVisible().catch(() => false)) return first
+    }
+    await page.waitForTimeout(300)
+  }
+  throw new Error(`Could not find ${kind === 'field' ? 'field' : h.role || 'element'} "${h.label || h.name || h.text || h.testid}" on ${page.url()}`)
+}
+
+async function settle(page: Page) {
+  await page.waitForLoadState('domcontentloaded').catch(() => {})
+  await page.waitForTimeout(400)
+}
+
+const webExec = (action: string, via: string, fn: (page: Page, p: Record<string, string>) => Promise<Record<string, unknown>>): Executor => ({
+  action,
+  mechanism: 'browser',
+  via,
+  available: () => true,
+  async execute(params, ctx) {
+    const page = await runPage(ctx.runId)
+    const out = await fn(page, params)
+    await settle(page)
+    return out
+  },
+})
+
+const webOpen = webExec('web.open', 'Playwright (automation browser)', async (page, p) => {
+  await page.goto(p.url, { waitUntil: 'domcontentloaded' })
+  return {}
+})
+const webClick = webExec('web.click', 'Playwright (automation browser)', async (page, p) => {
+  await (await locate(page, p, 'click')).click()
+  return {}
+})
+const webFill = webExec('web.fill', 'Playwright (automation browser)', async (page, p) => {
+  const el = await locate(page, p, 'field')
+  const editable = await el.evaluate((n) => (n as HTMLElement).isContentEditable).catch(() => false)
+  if (editable) {
+    await el.click()
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
+    await page.keyboard.type(p.value)
+  } else await el.fill(p.value)
+  return {}
+})
+const webUpload = webExec('web.upload', 'Playwright (automation browser)', async (page, p) => {
+  if (!p.path || !fs.existsSync(p.path)) throw new Error(`File not found: ${p.path || '(empty)'}`)
+  await (await locate(page, p, 'field')).setInputFiles(p.path)
+  return {}
+})
+const webPress = webExec('web.press', 'Playwright (automation browser)', async (page, p) => {
+  if (p.label || p.placeholder) await (await locate(page, p, 'field')).press(p.key)
+  else await page.keyboard.press(p.key)
+  return {}
+})
+
+// ---------- Desktop apps (accessibility) ----------
+
+const desktopVia = process.platform === 'win32' ? 'Windows UI Automation' : 'macOS Accessibility (AX)'
+const desktopExec = (action: string, op: (p: Record<string, string>) => Parameters<typeof runDesktop>[0]): Executor => ({
+  action,
+  mechanism: 'accessibility',
+  via: desktopVia,
+  available: () => desktopSupported(),
+  async execute(params) {
+    await runDesktop(op(params))
+    return {}
+  },
+})
+
+const desktopOpen = desktopExec('desktop.open_app', (p) => ({ op: 'open', app: p.app }))
+const desktopClick = desktopExec('desktop.click', (p) => ({ op: 'click', app: p.app, name: p.name, role: p.role }))
+const desktopType = desktopExec('desktop.type', (p) => ({ op: 'type', app: p.app, name: p.label, value: p.value }))
+const desktopPress = desktopExec('desktop.press', (p) => ({ op: 'press', app: p.app, keys: p.keys }))
+
+// ---------- Spreadsheets (file-level app integration) ----------
+
+const excelAppend: Executor = {
+  action: 'excel.append_row',
+  mechanism: 'app',
+  via: 'Workbook file (ExcelJS / CSV)',
+  available: () => true,
+  async execute(params) {
+    const values = params.values.split('|').map((v) => v.trim())
+    const file = params.file
+    if (!file) throw new Error('No workbook path')
+    if (/\.csv$/i.test(file)) {
+      const line = values.map((v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)).join(',')
+      const needsNewline = fs.existsSync(file) && !fs.readFileSync(file, 'utf8').endsWith('\n')
+      fs.appendFileSync(file, `${needsNewline ? '\n' : ''}${line}\n`)
+      return { row: values.join(' | ') }
+    }
+    const ExcelJS = (await import('exceljs')).default
+    const wb = new ExcelJS.Workbook()
+    if (fs.existsSync(file)) await wb.xlsx.readFile(file)
+    const ws = (params.sheet && wb.getWorksheet(params.sheet)) || wb.worksheets[0] || wb.addWorksheet(params.sheet || 'Sheet1')
+    const row = ws.addRow(values.map((v) => (v !== '' && !isNaN(Number(v)) ? Number(v) : v)))
+    try {
+      await wb.xlsx.writeFile(file)
+    } catch (err) {
+      throw new Error(`Could not save ${path.basename(file)} (${(err as Error).message}). Close it in Excel and retry.`)
+    }
+    return { row: row.number }
+  },
+}
+
 // ---------- Control ----------
 
 export class AskUser extends Error {}
@@ -239,6 +371,16 @@ export const EXECUTORS: Executor[] = [
   crmUpdateApi,
   crmUpdateBrowser,
   slackApi,
+  webOpen,
+  webClick,
+  webFill,
+  webUpload,
+  webPress,
+  desktopOpen,
+  desktopClick,
+  desktopType,
+  desktopPress,
+  excelAppend,
   askUser,
 ]
 

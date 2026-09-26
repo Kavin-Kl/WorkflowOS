@@ -70,7 +70,7 @@ export class DiscoveryEngine {
           log('discover', `Repeated workflow found (${m.support}×): ${m.signature.join(' → ')}`)
           pattern.intent = await understandPattern(m, byId)
           const channel = observedChannel(m, byId) ?? s.slackDefaultChannel
-          const { spec, warnings, errors } = await generateWorkflow(m.signature, pattern.intent, { slackChannel: channel })
+          const { spec, warnings, errors } = await generateWorkflow(m.signature, pattern.intent, { slackChannel: channel, occurrences: m.occurrences, eventsById: byId })
           for (const w of warnings) log('generate', w, 'warn')
           if (errors.length) {
             log('generate', `Could not generate a workflow: ${errors.join('; ')}`, 'warn')

@@ -5,7 +5,8 @@ import { bus, log, newId } from '../core/bus'
 import { actionById } from '../generate/catalog'
 import { orderLadder, recordOutcome } from '../learn/stats'
 import { AskUser, executorsFor, type ExecContext } from './executors'
-import { evaluate, interpolateParams, withOutputs, type Vars } from './vars'
+import { evaluate, interpolate, interpolateParams, withOutputs, type Vars } from './vars'
+import { releaseRunPage } from './browser'
 
 const STEP_TIMEOUT_MS = 90_000
 
@@ -25,6 +26,13 @@ export class AutomationEngine {
       steps: [],
       vars: { ...triggerVars },
     }
+    // Inputs mapped to trigger data (e.g. input.customer_email ← {{email.fromAddress}}).
+    for (const v of workflow.spec.variables) {
+      const key = `input.${v.name}`
+      if (run.vars[key] !== undefined || !v.from.includes('{{')) continue
+      const value = interpolate(v.from, run.vars).trim()
+      if (value) run.vars[key] = value
+    }
     saveRun(run)
     log('engine', `▶ ${workflow.spec.name} (${trigger})`)
     return this.continueFrom(workflow, run, 0)
@@ -41,6 +49,7 @@ export class AutomationEngine {
       return run
     }
     run.vars = { ...run.vars, ...patch }
+    run.needs = undefined
     const at = Number(run.vars[RESUME_AT] ?? 0)
     const pausedIdx = run.steps.findIndex((s) => s.status === 'waiting_user' || s.status === 'failed')
     const from = mode === 'retry' && pausedIdx >= 0 ? pausedIdx : at
@@ -60,6 +69,18 @@ export class AutomationEngine {
     const steps = workflow.spec.steps
     for (let i = from; i < steps.length; i++) {
       const step = steps[i]
+      if (missingInputs(step.params, run.vars).length && !(step.when && !evaluate(step.when, run.vars))) {
+        // Ask for everything the rest of the run needs in one go.
+        const missing = [...new Set(steps.slice(i).flatMap((st) => missingInputs(st.params, run.vars)))]
+        run.needs = missing.map((name) => ({
+          name,
+          description: workflow.spec.variables.find((v) => `input.${v.name}` === name)?.description ?? name.replace(/^input\./, '').replace(/_/g, ' '),
+        }))
+        run.vars[RESUME_AT] = i
+        run.status = 'waiting_user'
+        run.message = `Needs ${run.needs.map((n) => n.description).join(', ')} to continue`
+        return this.finish(run, true)
+      }
       const result = await this.runStep(step, run)
       run.steps.push(result)
 
@@ -99,7 +120,10 @@ export class AutomationEngine {
   }
 
   private finish(run: Run, paused: boolean): Run {
-    if (!paused) run.finishedAt = Date.now()
+    if (!paused) {
+      run.finishedAt = Date.now()
+      releaseRunPage(run.id)
+    }
     saveRun(run)
     log('engine', `■ run ${run.id}: ${run.status}${run.message ? ` — ${run.message}` : ''}`, run.status === 'failed' ? 'warn' : 'info')
     return run
@@ -110,7 +134,7 @@ export class AutomationEngine {
     if (step.when && !evaluate(step.when, run.vars)) return { ...base, status: 'skipped', message: 'Condition not met' }
 
     const params = interpolateParams(step.params, run.vars)
-    const ctx: ExecContext = { vars: run.vars, dataDir: this.dataDir, log: (m) => log('engine', m) }
+    const ctx: ExecContext = { runId: run.id, vars: run.vars, dataDir: this.dataDir, log: (m) => log('engine', m) }
 
     const executors = executorsFor(step.action)
     const order = orderLadder(
@@ -144,6 +168,18 @@ export class AutomationEngine {
     const last = attempts.filter((a) => !a.error?.startsWith('unavailable')).pop() ?? attempts[attempts.length - 1]
     return { ...base, status: 'failed', attempts, message: last?.error ?? 'No mechanism can run this action' }
   }
+}
+
+/** {{input.x}} references whose value is not known yet. */
+export function missingInputs(params: Record<string, string>, vars: Vars): string[] {
+  const out = new Set<string>()
+  for (const v of Object.values(params)) {
+    for (const m of v.matchAll(/\{\{\s*(input\.[\w.]+)\s*\}\}/g)) {
+      const val = vars[m[1]]
+      if (val === undefined || val === null || val === '') out.add(m[1])
+    }
+  }
+  return [...out]
 }
 
 function outputNamespace(action: string): string {

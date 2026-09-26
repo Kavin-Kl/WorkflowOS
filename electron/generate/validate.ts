@@ -34,7 +34,7 @@ export function validateSpec(input: WorkflowSpec): ValidationResult {
     spec.trigger = { type: 'manual', config: {}, description: 'Run manually' }
   }
   spec.trigger.config ??= {}
-  const available: string[] = [...(trig ?? TRIGGERS.find((t) => t.type === 'manual')!).outputs]
+  const available: string[] = ['input.*', ...(trig ?? TRIGGERS.find((t) => t.type === 'manual')!).outputs]
 
   const steps: WorkflowStep[] = []
   for (const raw of spec.steps ?? []) {

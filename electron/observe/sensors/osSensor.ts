@@ -14,7 +14,11 @@ interface Sample {
   title?: string
   role?: string
   label?: string
+  value?: string
+  secure?: boolean
 }
+
+const BUTTON_ROLES = /^(button|menuitem|checkbox|radiobutton|tabitem|hyperlink|splitbutton)$/i
 
 /**
  * Foreground app/window + focused accessibility element, for macOS and Windows.
@@ -25,6 +29,7 @@ interface Sample {
 export class OsSensor {
   private proc: ChildProcess | null = null
   private last: Sample = {}
+  private field: { control: string; app: string; label: string; role: string; process: string; title?: string; initial: string; value: string } | null = null
   private lastApp = ''
   private restarts = 0
   private stopped = true
@@ -81,10 +86,39 @@ export class OsSensor {
       this.emit({ source: 'window', kind: 'app_focus', app, title: s.title, data: { process: s.app } })
       this.lastApp = app
     }
-    const control = s.role && s.label ? `${s.role.replace(/^AX/, '').toLowerCase()}:${s.label}` : ''
-    const prevControl = this.last.role && this.last.label ? `${this.last.role.replace(/^AX/, '').toLowerCase()}:${this.last.label}` : ''
-    if (control && control !== prevControl && !isBrowserProcess(s.app)) {
-      this.emit({ source: 'accessibility', kind: 'ui_focus', app, target: control, title: s.title })
+    const controlOf = (x: Sample) => (x.role && x.label ? `${x.role.replace(/^AX/, '').toLowerCase()}:${x.label}` : '')
+    const control = controlOf(s)
+    const prevControl = controlOf(this.last)
+    const native = !isBrowserProcess(s.app)
+
+    // Leaving a text field whose value changed = the user typed something there.
+    if (this.field && (control !== this.field.control || app !== this.field.app)) {
+      const f = this.field
+      this.field = null
+      if (f.value !== f.initial && f.value !== undefined) {
+        this.emit({
+          source: 'accessibility',
+          kind: 'input',
+          app: f.app,
+          target: `field:${f.label}`,
+          title: f.title,
+          data: { value: f.value, length: f.value.length, hints: { role: f.role, name: f.label, app: f.process } },
+        })
+      }
+    }
+    if (native && control && s.value !== undefined && !s.secure) {
+      if (!this.field) this.field = { control, app, label: s.label!, role: s.role!, process: s.app, title: s.title, initial: s.value, value: s.value }
+      else this.field.value = s.value
+    }
+
+    if (control && control !== prevControl && native) {
+      const role = s.role!.replace(/^AX/, '')
+      // On Windows a clicked button takes focus, so focus on a button ≈ a click.
+      if (process.platform === 'win32' && BUTTON_ROLES.test(role)) {
+        this.emit({ source: 'accessibility', kind: 'click', app, target: `button:${s.label}`, title: s.title, data: { hints: { role, name: s.label, app: s.app } } })
+      } else {
+        this.emit({ source: 'accessibility', kind: 'ui_focus', app, target: control, title: s.title })
+      }
     }
     this.last = s
   }

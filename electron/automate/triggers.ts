@@ -59,6 +59,7 @@ export class TriggerManager {
 
   start() {
     this.timer = setInterval(() => this.poll(), POLL_MS)
+    setInterval(() => this.checkSchedules(), 20_000)
     setTimeout(() => this.poll(), 5_000)
   }
 
@@ -75,7 +76,27 @@ export class TriggerManager {
     }
   }
 
+  private lastScheduleCheck = ''
+
+  /** Daily "HH:MM" schedules, checked once a minute. */
+  private checkSchedules() {
+    const now = new Date()
+    const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    if (hhmm === this.lastScheduleCheck) return
+    this.lastScheduleCheck = hhmm
+    const day = now.toISOString().slice(0, 10)
+    for (const wf of this.workflows()) {
+      if (wf.status !== 'active' || wf.spec.trigger.type !== 'schedule') continue
+      const [h, m] = (wf.spec.trigger.config.time ?? '').split(':').map(Number)
+      if (h !== now.getHours() || m !== now.getMinutes() || seen(wf.id, `schedule:${day}`)) continue
+      markSeen(wf.id, `schedule:${day}`)
+      log('trigger', `Scheduled run: ${wf.spec.name}`)
+      this.fire(wf, {}, `Schedule ${wf.spec.trigger.config.time}`).catch(() => {})
+    }
+  }
+
   async poll() {
+    this.checkSchedules()
     if (this.polling || !gmailConnected()) return
     this.polling = true
     try {

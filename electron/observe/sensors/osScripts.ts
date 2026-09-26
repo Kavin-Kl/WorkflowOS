@@ -28,6 +28,10 @@ while (true) {
       if (!label) { try { label = f.name(); } catch (e) {} }
       if (!label) { try { label = f.title(); } catch (e) {} }
       if (label) o.label = String(label).slice(0, 80);
+      if (o.role === 'AXSecureTextField') { o.secure = true; }
+      else if (/^AX(TextField|TextArea|ComboBox|SearchField)$/.test(o.role || '')) {
+        try { var v = f.value(); if (v !== null && v !== undefined) o.value = String(v).slice(0, 2000); } catch (e) {}
+      }
     } catch (e) {}
   } catch (e) {}
   var s = JSON.stringify(o);
@@ -70,6 +74,14 @@ while ($true) {
       $o.role = $f.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
       $n = $f.Current.Name
       if ($n) { $o.label = $n.Substring(0, [Math]::Min(80, $n.Length)) }
+      if ($f.Current.IsPassword) { $o.secure = $true }
+      else {
+        try {
+          $vp = $f.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+          $v = $vp.Current.Value
+          if ($v -ne $null) { $o.value = $v.Substring(0, [Math]::Min(2000, $v.Length)) }
+        } catch {}
+      }
     }
   } catch {}
   $s = $o | ConvertTo-Json -Compress
